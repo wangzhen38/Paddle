@@ -1030,6 +1030,7 @@ function get_quickly_disable_ut() {
 
 function card_test() {
     set -m
+    CTEST_PARALLEL_LEVEL=2
     case_count $1 $2
     ut_startTime_s=`date +%s` 
 
@@ -1160,6 +1161,7 @@ set +x
         multiple_card_tests_two_parallel='^job$'    # cases list which would run 2 job each time with multiple GPUs, most cases would be two GPUs
         multiple_card_tests_non_parallel='^job$'    # cases list which would run 1 job each time with multiple GPUs, most cases would be two GPUs
         
+        exclusive_tests_high_parallel='^job$'
         exclusive_tests_two_parallel='^job$'        # cases list which would run 2 job exclusively(with all GPUs)
         exclusive_tests_non_parallel='^job$'        # cases list which would run 1 job exclusively(with all GPUs)
         
@@ -1215,7 +1217,9 @@ set +x
                 fi
 
                 if [[ "$is_exclusive" != "" ]]; then
-                    if [[ $(echo $cpu_parallel_job$tetrad_parallel_job$two_parallel_job | grep -o "\^$testcase\\$") != "" ]]; then
+                    if [[ $(echo $cpu_parallel_job | grep -o "\^$testcase\\$") != "" ]]; then
+                        exclusive_tests_high_parallel="$exclusive_tests_high_parallel|^$testcase$"
+                    elif [[ $(echo $tetrad_parallel_job$two_parallel_job | grep -o "\^$testcase\\$") != "" ]]; then
                         exclusive_tests_two_parallel="$exclusive_tests_two_parallel|^$testcase$"
                     else
                         exclusive_tests_non_parallel="$exclusive_tests_non_parallel|^$testcase$"
@@ -1243,23 +1247,37 @@ set +x
                 testcase=''
         done <<< "$test_cases";
 
-        card_test "$single_card_tests_high_parallel" 1 6        # run cases the most each time with single GPU
-        card_test "$single_card_tests_two_parallel" 1 2         # run cases 2 job each time with single GPU
+        single_ut_startTime_s=`date +%s`
+        card_test "$single_card_tests_high_parallel" 1 24        # run cases the most each time with single GPU
+        card_test "$single_card_tests_two_parallel" 1 7         # run cases 2 job each time with single GPU
         card_test "$single_card_tests_non_parallel" 1           # run cases 1 job each time with single GPU
-        
+        single_ut_endTime_s=`date +%s`
+
+        multi_ut_startTime_s=`date +%s`
         card_test "$multiple_card_tests_two_parallel" 2 2       # run cases 2 job each time with two GPUs
         card_test "$multiple_card_tests_non_parallel" 2         # run cases 1 job each time with two GPUs
-        
+        multi_ut_endTime_s=`date +%s`
+
+        exclu_ut_startTime_s=`date +%s`
+        card_test "$exclusive_tests_high_parallel" -1 4
         card_test "$exclusive_tests_two_parallel" -1 2          # run cases exclusively, in this cases would be run with 2/4/8 GPUs
-        card_test "$exclusive_tests_non_parallel" -1            # run cases exclusively, in this cases would be run with 2/4/8 GPUs
+        card_test "$exclusive_tests_non_parallel" -1          # run cases exclusively, in this cases would be run with 2/4/8 GPUs
+        exclu_ut_endTime_s=`date +%s`
+
+        echo "single UT testCase Time: $[ $single_ut_endTime_s - $single_ut_startTime_s ]s"
+        echo "mul UT testCase Time: $[ $multi_ut_endTime_s - $multi_ut_startTime_s ]s"
+        echo "exclu UT testCase Time: $[ $exclu_ut_endTime_s - $exclu_ut_startTime_s ]s"
+
         collect_failed_tests
         rm -f $tmp_dir/*
         exec_times=0
         retry_unittests_record=''
         retry_time=3
         exec_time_array=('first' 'second' 'third')
-        exec_retry_threshold=10
+        exec_retry_threshold=80
         is_retry_execuate=0
+
+        rerun_ut_startTime_s=`date +%s`
         if [ -n "$failed_test_lists" ];then
             if [ ${TIMEOUT_DEBUG_HELP:-OFF} == "ON" ];then
                 bash $PADDLE_ROOT/tools/timeout_debug_help.sh "$failed_test_lists"    # cat logs for tiemout uts which killed by ctest
@@ -1318,7 +1336,7 @@ set +x
                             done
 
                         if [[ "$one_card_retry" != "" ]]; then
-                            card_test "$one_card_retry" 1
+                            card_test "$one_card_retry" 1 4
                         fi
 
                         if [[ "$multiple_card_retry" != "" ]]; then
@@ -1342,6 +1360,8 @@ set +x
                 is_retry_execuate=1
             fi
         fi
+        rerun_ut_endTime_s=`date +%s`
+        echo "rerun UT testCase Time: $[ $rerun_ut_endTime_s - $rerun_ut_startTime_s ]s"
 
         if [[ "$EXIT_CODE" != "0" ]]; then
             show_ut_retry_result
