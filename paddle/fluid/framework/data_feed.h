@@ -1383,6 +1383,113 @@ class RecordCandidateList {
   std::unordered_set<uint16_t> slot_index_to_replace_;
 };
 
+struct SlotRecordCandidate {
+  std::string ins_id_;
+  std::unordered_multimap<uint16_t, uint64_t> feas_;
+  size_t shadow_index_ = -1;  // Optimization for Reservoir Sample
+
+  SlotRecordCandidate() {}
+  SlotRecordCandidate(
+      const SlotRecord& rec,
+      const std::unordered_set<uint16_t>& slot_index_to_replace) {
+    int cnt = 0;
+    for (auto fea = 0; fea < static_cast<int>(
+                rec->slot_uint64_feasigns_.slot_offsets.size()) - 1; ++fea) {
+      if (slot_index_to_replace.find(fea) != slot_index_to_replace.end()) {
+        for (auto i = rec->slot_uint64_feasigns_.slot_offsets.at(cnt);
+             i < rec->slot_uint64_feasigns_.slot_offsets.at(cnt + 1);
+             i++) {
+          feas_.insert({cnt, rec->slot_uint64_feasigns_.slot_values.at(i)});
+        }
+      }
+      ++cnt;
+    }
+  }
+  SlotRecordCandidate& operator=(const SlotRecord& rec) {
+    feas_.clear();
+    ins_id_ = rec->ins_id_;
+    int len_slot = 
+        static_cast<int>(rec->slot_uint64_feasigns_.slot_offsets.size()) - 1;
+    for (auto cnt = 0; cnt < len_slot; ++cnt) {
+      for (auto i = rec->slot_uint64_feasigns_.slot_offsets.at(cnt);
+           i < rec->slot_uint64_feasigns_.slot_offsets.at(cnt + 1);
+           i++) {
+        feas_.insert({cnt, rec->slot_uint64_feasigns_.slot_values.at(i)});
+      }
+    }
+    return *this;
+  }
+};
+
+class SlotRecordCandidateList {
+ public:
+  SlotRecordCandidateList() = default;
+  SlotRecordCandidateList(const SlotRecordCandidateList&) {}
+
+  size_t Size() { return cur_size_; }
+  void ReSize(size_t length);
+
+  void ReInit();
+  void ReInitPass() {
+    for (size_t i = 0; i < cur_size_; ++i) {
+      if (candidate_list_[i].shadow_index_ != i) {
+        candidate_list_[i].ins_id_ =
+            candidate_list_[candidate_list_[i].shadow_index_].ins_id_;
+        candidate_list_[i].feas_.swap(
+            candidate_list_[candidate_list_[i].shadow_index_].feas_);
+        candidate_list_[i].shadow_index_ = i;
+      }
+    }
+    candidate_list_.resize(cur_size_);
+  }
+
+  void AddAndGet(const SlotRecord& record, SlotRecordCandidate* result);
+  void AddAndGet(const SlotRecord& record, size_t& index_result) {  // NOLINT
+    // std::unique_lock<std::mutex> lock(mutex_);
+    size_t index = 0;
+    ++total_size_;
+    auto fleet_ptr = FleetWrapper::GetInstance();
+    if (!full_) {
+      candidate_list_.emplace_back(record, slot_index_to_replace_);
+      candidate_list_.back().shadow_index_ = cur_size_;
+      ++cur_size_;
+      full_ = (cur_size_ == capacity_);
+    } else {
+      index = fleet_ptr->LocalRandomEngine()() % total_size_;
+      if (index < capacity_) {
+        candidate_list_.emplace_back(record, slot_index_to_replace_);
+        candidate_list_[index].shadow_index_ = candidate_list_.size() - 1;
+      }
+    }
+    index = fleet_ptr->LocalRandomEngine()() % cur_size_;
+    index_result = candidate_list_[index].shadow_index_;
+  }
+  const SlotRecordCandidate& Get(size_t index) const {
+    PADDLE_ENFORCE_LT(
+        index,
+        candidate_list_.size(),
+        platform::errors::OutOfRange("Your index [%lu] exceeds the number of "
+                                     "elements in candidate_list[%lu].",
+                                     index,
+                                     candidate_list_.size()));
+    return candidate_list_[index];
+  }
+  void SetSlotIndexToReplace(
+      const std::unordered_set<uint16_t>& slot_index_to_replace) {
+    slot_index_to_replace_ = slot_index_to_replace;
+  }
+
+ private:
+  size_t capacity_ = 0;
+  std::mutex mutex_;
+  bool full_ = false;
+  size_t cur_size_ = 0;
+  size_t total_size_ = 0;
+  std::vector<SlotRecordCandidate> candidate_list_;
+  std::unordered_set<uint16_t> slot_index_to_replace_;
+};
+
+
 template <class AR>
 paddle::framework::Archive<AR>& operator<<(paddle::framework::Archive<AR>& ar,
                                            const FeatureFeasign& fk) {
