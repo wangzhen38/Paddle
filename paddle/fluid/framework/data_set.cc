@@ -1659,7 +1659,8 @@ void SlotRecordDataset::GetRandomData(
   // VLOG(0) << "Begin to get_random data";
   for (const auto& rec : slots_shuffle_original_data) {
     SlotRecordCandidate rand_rec;
-    SlotRecord new_rec = rec;
+    SlotRecord new_rec = make_slotrecord();
+    *new_rec = *rec; 
 
     slots_record_shuffle_rclist_.AddAndGet(rec, &rand_rec);
     // VLOG(0) << "shuffle_done";
