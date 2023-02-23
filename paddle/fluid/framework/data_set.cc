@@ -1978,6 +1978,7 @@ inline std::default_random_engine& local_random_engine() {
 void SlotRecordDataset::PrepareTrain() {
 #ifdef PADDLE_WITH_GLOO
   if (enable_heterps_) {
+    pre_input_records_.clear();
     if (pre_input_records_.size() == 0 && input_channel_ != nullptr &&
         input_channel_->Size() != 0) {
       // channel shuffle 
